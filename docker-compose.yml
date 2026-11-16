@@ -1,0 +1,55 @@
+# Local n8n for LendLoop.
+#   cp n8n/.env.example n8n/.env   # fill in values
+#   docker compose up -d           # n8n on http://localhost:5678
+#   docker compose --profile tunnel up -d   # also expose n8n webhooks to Convex cloud
+name: lendloop
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.45.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678" # bound to localhost only
+    env_file:
+      - ./n8n/.env
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      NODE_ENV: production
+      # Code nodes need Node's crypto module for HMAC signing and verification.
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      # Code nodes read the shared secrets from this container's environment.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      # Keep failed and successful executions so runs are auditable.
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: all
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336" # hours (14 days)
+      # Set this to the tunnel URL when using the tunnel profile, so n8n shows correct webhook URLs.
+      WEBHOOK_URL: ${N8N_PUBLIC_URL:-http://localhost:5678/}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # Optional: public HTTPS URL for n8n so Convex cloud can call the webhook.
+  # The URL is printed in `docker compose logs tunnel` (https://<random>.trycloudflare.com).
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.6
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://n8n:5678
+    depends_on:
+      n8n:
+        condition: service_healthy
+
+volumes:
+  n8n_data:

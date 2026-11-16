@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# testing
+coverage/
+
+# env files (never commit secrets)
+.env
+.env.*
+!.env.example
+!n8n/.env.example
+
+# convex local state
+.convex/
+
+# n8n local data volume (if bind-mounted)
+n8n/data/
+
+# os / editors
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.log
+
+# AI agent skills installed locally by `npx convex dev` / `npx convex ai-files install`
+.agents/
+.claude/
+skills-lock.json

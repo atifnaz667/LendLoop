@@ -1,0 +1,111 @@
+# CLAUDE.md
+
+Rules and conventions for anyone (human or AI assistant) working in this repository.
+Read this file and `docs/architecture.md` before changing code.
+
+## Project in one paragraph
+
+LendLoop is a neighborhood tool-lending board. Neighbors list tools, request to borrow them for a
+date range, and owners approve, decline and mark loans as returned. n8n sends request
+notifications and daily overdue reminders. Stack: Next.js (App Router) + TypeScript, Clerk for
+authentication, Convex for data and backend logic, n8n (self-hosted in Docker) for automation.
+
+## Golden rules
+
+1. **Security is enforced in Convex, never only in the UI.** Every public query and mutation must
+   resolve the caller with `requireUser` / `requireAdmin` (or be explicitly public and return only
+   public fields). Hiding a button is UX, not authorization.
+2. **Respect the layers.** `convex/http.ts` (routes) and function modules (controllers) call
+   `convex/services`, which call `convex/models`. Only models touch `ctx.db`. ESLint enforces this.
+3. **Never put secrets in code, tests, fixtures, docs examples or exported n8n JSON.** Secrets live
+   in `.env.local` (Next.js), Convex environment variables, and the n8n container environment or
+   n8n credentials. Use obvious placeholders such as `replace-me` in examples.
+4. **Minimize data.** Return the smallest shape a screen or workflow needs. Public endpoints return
+   tool name and category only. n8n payloads carry only the fields a message needs.
+5. **Every webhook is signed and verified.** Inbound requests are rejected unless the HMAC
+   signature is valid and the timestamp is within the tolerance window. Compare signatures in
+   constant time.
+6. **Write-backs are idempotent.** Anything n8n can retry must carry an idempotency key and be safe
+   to apply twice.
+7. **Fail loudly.** No empty `catch` blocks. Expected business errors use `AppError` with a code;
+   unexpected errors propagate so Convex and n8n record them.
+8. **No em-dashes** in any text (docs, comments, UI copy). Use commas, periods or parentheses.
+
+## Folder structure
+
+```
+convex/
+  schema.ts              Data model (tables + indexes)
+  auth.config.ts         Clerk as the Convex auth provider
+  http.ts                HTTP routes (webhooks in, n8n endpoints)
+  crons.ts               Scheduled jobs (outbox sweep)
+  <domain>.ts            Controllers: thin query/mutation handlers (args validation, auth, call service)
+  integrations/          HTTP controllers and internal actions for Clerk and n8n
+  services/              Business logic and rules (pure where possible, no direct ctx.db)
+  models/                Data access only (one file per table)
+  lib/                   Cross-cutting helpers: auth guards, errors, HMAC, dates, validators
+  shared/                Constants and types safe to import from the browser
+src/
+  app/                   Next.js routes. `(app)/` is the signed-in area, protected server side
+  components/ui/         Small, dependency-free UI primitives
+  components/layout/     Header, navigation, page shells
+  features/<domain>/     Feature components and hooks (tools, requests, admin)
+  lib/                   Client utilities (env, formatting)
+  proxy.ts               Clerk proxy (Next.js 16 name for middleware)
+tests/
+  convex/                Convex function tests with convex-test (auth, RBAC, flows)
+  unit/                  Pure unit tests (services, HMAC, dates)
+n8n/
+  workflows/             Exported workflow JSON (no secrets, no credentials data)
+docs/                    architecture.md, roadmap.md
+```
+
+## Conventions
+
+- TypeScript strict mode, `noUncheckedIndexedAccess`. No `any` unless commented why.
+- Convex functions always declare `args` validators. Internal-only functions use
+  `internalQuery` / `internalMutation` / `internalAction`.
+- Dates for loans are calendar dates stored as `YYYY-MM-DD` strings and compared in UTC.
+- Names: files in `convex/` use camelCase (Convex maps file paths to API names); React components
+  use PascalCase files.
+- Errors: throw `AppError(code, message)` from services. Codes: `UNAUTHENTICATED`, `FORBIDDEN`,
+  `NOT_FOUND`, `VALIDATION`, `CONFLICT`.
+- UI copy is short, friendly and plain. Every list has an empty state and a loading state.
+
+## Commands
+
+```bash
+npm run dev          # Next.js + Convex dev server
+npm run lint         # ESLint (includes the layering rule)
+npm run typecheck    # tsc for the app and for convex/
+npm test             # Vitest (unit + convex-test)
+npm run check        # lint + typecheck + test (run before every PR)
+docker compose up -d # n8n on http://localhost:5678
+```
+
+## Definition of done for a change
+
+- `npm run check` passes.
+- New Convex functions have tests for the happy path and at least one authorization failure.
+- No secrets or personal data added to the repo. `git diff` reviewed for both.
+- Docs updated when behavior, env vars or endpoints change (README, architecture.md).
+
+## Git workflow
+
+- Branch per module (`feat/auth-rbac`, `feat/tools`, ...), small focused commits, PR into `main`.
+- Commit message style: Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
+- AI assistants must not commit, push or open PRs in this repository. The maintainer does that.
+
+<!-- convex-ai-start -->
+
+This project uses [Convex](https://convex.dev) as its backend.
+
+When working on Convex code, **always read
+`convex/_generated/ai/guidelines.md` first** for important guidelines on
+how to correctly use Convex APIs and patterns. The file contains rules that
+override what you may have learned about Convex from training data.
+
+Convex agent skills for common tasks can be installed by running
+`npx convex ai-files install`.
+
+<!-- convex-ai-end -->
