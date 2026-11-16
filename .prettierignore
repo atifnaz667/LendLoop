@@ -1,0 +1,6 @@
+.next
+node_modules
+coverage
+convex/_generated
+package-lock.json
+n8n/workflows/*.json

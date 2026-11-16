@@ -1,0 +1,49 @@
+{
+  "name": "lendloop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Neighborhood tool-lending board with automated n8n workflows.",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:frontend dev:backend",
+    "dev:frontend": "next dev",
+    "dev:backend": "convex dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p convex",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^7.10.0",
+    "clsx": "^2.1.1",
+    "convex": "^1.50.0",
+    "next": "^16.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@eslint/eslintrc": "^3.3.7",
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitest/coverage-v8": "^5.1.0",
+    "convex-test": "^0.0.71",
+    "eslint": "^9.39.0",
+    "eslint-config-next": "^16.4.6",
+    "npm-run-all2": "^8.0.4",
+    "prettier": "^3.10.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  }
+}
