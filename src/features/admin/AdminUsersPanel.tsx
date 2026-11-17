@@ -7,26 +7,15 @@ import type { Id } from "@convex/_generated/dataModel";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { useCurrentUser } from "@/features/users/useCurrentUser";
 import { getErrorMessage } from "@/lib/errors";
 
-/**
- * Members list with the Trusted Lender toggle. The UI hides this from
- * non-admins for convenience; the Convex functions enforce it regardless.
- */
+/** Members list with the Trusted Lender toggle. Rendered inside AdminGate. */
 export function AdminUsersPanel() {
-  const { user, isLoading } = useCurrentUser();
-  const isAdmin = user?.role === "admin";
-  const members = useQuery(api.users.listForAdmin, isAdmin ? {} : "skip");
+  const members = useQuery(api.users.listForAdmin);
   const setTrusted = useMutation(api.users.setTrustedLender);
   const [pendingId, setPendingId] = useState<Id<"users"> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  if (isLoading) return <p className="text-sm text-muted">Loading...</p>;
-  if (!isAdmin) {
-    return <EmptyState title="Admins only" description="You don't have access to this page." />;
-  }
   if (members === undefined) return <p className="text-sm text-muted">Loading members...</p>;
 
   async function toggle(userId: Id<"users">, trusted: boolean) {
