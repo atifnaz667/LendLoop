@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import {
   vAutomationEventKind,
+  vRequestEventType,
   vIsoDate,
   vRequestStatus,
   vRole,
@@ -65,8 +66,9 @@ export default defineSchema({
    */
   webhookDeliveries: defineTable({
     eventId: v.string(),
-    eventType: v.string(),
+    eventType: vRequestEventType,
     requestId: v.id("borrowRequests"),
+    /** Exact JSON body that is signed and sent. Contains only minimized fields. */
     payload: v.string(),
     status: v.union(v.literal("pending"), v.literal("delivered"), v.literal("failed")),
     attempts: v.number(),

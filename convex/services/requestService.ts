@@ -9,7 +9,9 @@ import * as userModel from "../models/userModel";
 import type { UserDoc } from "../models/userModel";
 import { LIMITS, type RequestStatus } from "../shared/constants";
 import { canCancelRequest, canDecideRequest, canRequestTool, canViewAllLoans } from "./policy";
+import { notifyRequestEvent } from "./notificationService";
 import { assertTransition } from "./requestStateMachine";
+import * as automationEventModel from "../models/automationEventModel";
 
 export interface RequestInput {
   toolId: Id<"tools">;
@@ -80,7 +82,7 @@ export async function create(ctx: MutationCtx, actor: UserDoc, input: RequestInp
     throw conflict("You already have a pending request for these dates.");
   }
 
-  return requestModel.insert(ctx, {
+  const requestId = await requestModel.insert(ctx, {
     toolId: tool._id,
     borrowerId: actor._id,
     ownerId: tool.ownerId,
@@ -88,6 +90,12 @@ export async function create(ctx: MutationCtx, actor: UserDoc, input: RequestInp
     status: "pending",
     message,
   });
+  await notifyRequestEvent(
+    ctx,
+    { _id: requestId, toolId: tool._id, ownerId: tool.ownerId, borrowerId: actor._id, ...range },
+    "request.created",
+  );
+  return requestId;
 }
 
 /**
@@ -103,12 +111,14 @@ export async function approve(ctx: MutationCtx, actor: UserDoc, id: Id<"borrowRe
 
   const now = Date.now();
   await requestModel.patch(ctx, id, { status: "approved", decidedAt: now });
+  await notifyRequestEvent(ctx, request, "request.approved");
 
   const autoDeclined: Id<"borrowRequests">[] = [];
   const pending = await requestModel.listByToolAndStatus(ctx, request.toolId, "pending");
   for (const other of pending) {
     if (other._id !== id && rangesOverlap(other, request)) {
       await requestModel.patch(ctx, other._id, { status: "declined", decidedAt: now });
+      await notifyRequestEvent(ctx, other, "request.declined", "dates_taken");
       autoDeclined.push(other._id);
     }
   }
@@ -120,6 +130,7 @@ export async function decline(ctx: MutationCtx, actor: UserDoc, id: Id<"borrowRe
   if (!canDecideRequest(actor, request)) throw forbidden("Only the tool's owner can decline.");
   assertTransition(request.status, "declined");
   await requestModel.patch(ctx, id, { status: "declined", decidedAt: Date.now() });
+  await notifyRequestEvent(ctx, request, "request.declined");
 }
 
 export async function cancel(ctx: MutationCtx, actor: UserDoc, id: Id<"borrowRequests">) {
@@ -127,6 +138,7 @@ export async function cancel(ctx: MutationCtx, actor: UserDoc, id: Id<"borrowReq
   if (!canCancelRequest(actor, request)) throw forbidden("You can only cancel your own requests.");
   assertTransition(request.status, "cancelled");
   await requestModel.patch(ctx, id, { status: "cancelled", decidedAt: Date.now() });
+  await notifyRequestEvent(ctx, request, "request.cancelled");
 }
 
 /** The lender confirms the tool came back. */
@@ -137,6 +149,7 @@ export async function markReturned(ctx: MutationCtx, actor: UserDoc, id: Id<"bor
   }
   assertTransition(request.status, "returned");
   await requestModel.patch(ctx, id, { status: "returned", returnedAt: Date.now() });
+  await notifyRequestEvent(ctx, request, "request.returned");
 }
 
 /** Called when a listing is removed: open requests can no longer be fulfilled. */
@@ -145,6 +158,7 @@ export async function declinePendingForTool(ctx: MutationCtx, toolId: Id<"tools"
   const now = Date.now();
   for (const request of pending) {
     await requestModel.patch(ctx, request._id, { status: "declined", decidedAt: now });
+    await notifyRequestEvent(ctx, request, "request.declined", "listing_removed");
   }
   return pending.map((r) => r._id);
 }
@@ -152,6 +166,8 @@ export async function declinePendingForTool(ctx: MutationCtx, toolId: Id<"tools"
 // ---------------------------------------------------------------------------
 // Queries (views shaped per screen; only the other party's display name)
 // ---------------------------------------------------------------------------
+
+const ACTIVITY_LIMIT = 3;
 
 function isOverdue(request: Pick<RequestDoc, "status" | "endDate">, today: string) {
   return request.status === "approved" && request.endDate < today;
@@ -169,7 +185,10 @@ async function hydrate(ctx: QueryCtx, requests: RequestDoc[]) {
     ),
   ]);
   const today = todayIso();
-  return requests.map((r) => {
+  const activity = await Promise.all(
+    requests.map((r) => automationEventModel.listForRequest(ctx, r._id, ACTIVITY_LIMIT)),
+  );
+  return requests.map((r, index) => {
     const tool = tools.get(r.toolId);
     return {
       _id: r._id,
@@ -184,6 +203,8 @@ async function hydrate(ctx: QueryCtx, requests: RequestDoc[]) {
       decidedAt: r.decidedAt,
       returnedAt: r.returnedAt,
       isOverdue: isOverdue(r, today),
+      // Recent automation activity written back by n8n (bonus: "Reminder sent 2 days ago").
+      activity: (activity[index] ?? []).map((e) => ({ kind: e.kind, occurredAt: e.occurredAt })),
       borrower: { name: users.get(r.borrowerId)?.name ?? "Neighbor" },
       lender: {
         name: users.get(r.ownerId)?.name ?? "Neighbor",

@@ -1,6 +1,7 @@
 import { v, type Validator } from "convex/values";
 import {
   AUTOMATION_EVENT_KINDS,
+  REQUEST_EVENT_TYPES,
   REQUEST_STATUSES,
   ROLES,
   TOOL_CATEGORIES,
@@ -28,3 +29,4 @@ export const vAutomationEventKind = literalUnion(AUTOMATION_EVENT_KINDS);
 
 /** Calendar date in ISO format (YYYY-MM-DD). Format is checked in the service layer. */
 export const vIsoDate = v.string();
+export const vRequestEventType = literalUnion(REQUEST_EVENT_TYPES);

@@ -9,6 +9,11 @@ export type NewRequest = Omit<RequestDoc, "_id" | "_creationTime">;
 
 export const LIST_LIMIT = 200;
 
+/** Validates an id string from an external system belongs to this table. */
+export function normalizeId(ctx: QueryCtx, raw: string) {
+  return ctx.db.normalizeId("borrowRequests", raw);
+}
+
 export function getById(ctx: QueryCtx, id: Id<"borrowRequests">) {
   return ctx.db.get(id);
 }

@@ -37,6 +37,18 @@ const config = [
       ],
     },
   },
+  {
+    // n8n Code node bodies: run inside n8n with require(), $env, $input and console logging.
+    files: ["n8n/code/**/*.js"],
+    languageOptions: {
+      sourceType: "script",
+      parserOptions: { ecmaFeatures: { globalReturn: true } },
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+      "no-console": "off",
+    },
+  },
 ];
 
 export default config;
