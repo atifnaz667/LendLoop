@@ -34,3 +34,10 @@ export async function signIn(
   }
   return { as: identity, userId, subject };
 }
+
+export const sampleTool = {
+  name: "Cordless drill",
+  category: "power_tools" as const,
+  condition: "good" as const,
+  description: "18V drill with two batteries and a bit set.",
+};
