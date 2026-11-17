@@ -19,7 +19,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "check": "npm run lint && npm run typecheck && npm run test"
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "n8n:build": "node scripts/build-n8n-workflows.mjs",
+    "n8n:import": "docker compose exec n8n n8n import:workflow --separate --input=/workflows"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.10.0",

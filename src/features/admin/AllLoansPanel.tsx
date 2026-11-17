@@ -6,6 +6,7 @@ import { api } from "@convex/_generated/api";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { RequestStatusBadge } from "@/features/requests/RequestStatusBadge";
+import { relativeTime } from "@/lib/relativeTime";
 import { formatDate } from "@/features/tools/labels";
 import { cn } from "@/lib/cn";
 
@@ -64,6 +65,7 @@ export function AllLoansPanel() {
                 <th className="px-4 py-2 font-medium">Borrower</th>
                 <th className="px-4 py-2 font-medium">Dates</th>
                 <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Last automation</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -77,6 +79,11 @@ export function AllLoansPanel() {
                   </td>
                   <td className="px-4 py-2">
                     <RequestStatusBadge status={loan.status} isOverdue={loan.isOverdue} />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-xs text-muted">
+                    {loan.activity[0]
+                      ? `${loan.activity[0].kind.replace("_", " ")} ${relativeTime(loan.activity[0].occurredAt)}`
+                      : "None yet"}
                   </td>
                 </tr>
               ))}

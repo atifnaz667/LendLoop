@@ -68,3 +68,13 @@ export const LIMITS = {
   maxLoanDays: 30,
   maxDaysAhead: 180,
 } as const;
+
+/** Events Convex sends to the n8n request-notification workflow. */
+export const REQUEST_EVENT_TYPES = [
+  "request.created",
+  "request.approved",
+  "request.declined",
+  "request.cancelled",
+  "request.returned",
+] as const;
+export type RequestEventType = (typeof REQUEST_EVENT_TYPES)[number];

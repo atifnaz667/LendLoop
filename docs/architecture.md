@@ -176,7 +176,20 @@ already carries `eventId` and `eventType`, so the signature is bound to the even
   check-then-insert on `automationEvents.by_idempotencyKey` cannot create duplicates.
 - **No duplicate reminders.** The overdue endpoint excludes loans that already have a
   `reminder_sent` event for the current day, so re-running the workflow is safe.
-- **n8n side.** HTTP nodes use Retry On Fail, and every workflow sets the error workflow.
+- **n8n side.** HTTP and send nodes use Retry On Fail, and both automation workflows set the error
+  workflow. A reminder that still fails takes the node's error output and records `reminder_failed`
+  (key `reminder:<requestId>:<day>:failed`), so the next daily run tries again.
+- **Concurrency.** Each delivery attempt first claims the row with a short lease in a mutation, so the
+  scheduler and the cron sweep can never send the same event at the same time.
+- **Operator visibility.** Failed deliveries (with the last error) are listed on the Admin page with a
+  Retry action, and every loan shows its latest automation activity.
+
+### Workflow source
+
+The Code node bodies live in `n8n/code/*.js` and `scripts/build-n8n-workflows.mjs` generates the
+exported JSON in `n8n/workflows/`. Unit tests execute those files with the same globals n8n provides
+(`$env`, `$input`, `$getWorkflowStaticData`) and check that signatures produced by n8n verify in
+Convex and vice versa.
 
 ### Data minimization in payloads
 

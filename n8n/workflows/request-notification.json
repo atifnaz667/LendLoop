@@ -1,0 +1,376 @@
+{
+  "id": "LLRequestNotify1",
+  "name": "LendLoop - Request notification",
+  "active": false,
+  "nodes": [
+    {
+      "id": "3eb00000-0000-4000-8000-000000000001",
+      "name": "Request event webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "7c1f2a5e-3b8d-4c6a-9e21-4c3e5d6f7a81",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000002",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Verifies the HMAC signature on a request event from LendLoop (Convex) and\n// deduplicates by eventId. Secret comes from the container environment.\n// Signed string: `${timestamp}.${rawBody}`, header \"v1=<hex HMAC-SHA256>\".\nconst crypto = require(\"crypto\");\n\nconst TOLERANCE_SECONDS = 300;\nconst DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;\n\nconst secret = $env.LENDLOOP_TO_N8N_SECRET;\nif (!secret) throw new Error(\"LENDLOOP_TO_N8N_SECRET is not configured in the n8n environment\");\n\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst timestamp = String(headers[\"x-lendloop-timestamp\"] || \"\");\nconst signatureHeader = String(headers[\"x-lendloop-signature\"] || \"\");\n\n// Prefer the exact raw body (Webhook node \"Raw Body\" option). Fall back to\n// re-serializing the parsed JSON, which matches what Convex sends.\nlet rawBody;\ntry {\n  rawBody = (await this.helpers.getBinaryDataBuffer(0, \"data\")).toString(\"utf8\");\n} catch {\n  rawBody = JSON.stringify(item.json.body);\n}\n\nfunction reject(reason) {\n  return [{ json: { valid: false, reason } }];\n}\n\nif (!/^\\d{1,12}$/.test(timestamp) || !signatureHeader.startsWith(\"v1=\")) {\n  return reject(\"missing or malformed signature headers\");\n}\nconst nowSeconds = Math.floor(Date.now() / 1000);\nif (Math.abs(nowSeconds - Number(timestamp)) > TOLERANCE_SECONDS) {\n  return reject(\"timestamp outside tolerance\");\n}\n\nconst expected = crypto\n  .createHmac(\"sha256\", secret)\n  .update(`${timestamp}.${rawBody}`)\n  .digest(\"hex\");\nconst provided = signatureHeader.slice(3).toLowerCase();\nconst a = Buffer.from(expected, \"utf8\");\nconst b = Buffer.from(provided, \"utf8\");\nif (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {\n  return reject(\"signature mismatch\");\n}\n\nconst event = JSON.parse(rawBody);\n\n// Deduplicate retries from LendLoop (same eventId). Static data persists for\n// active (production) executions.\nconst staticData = $getWorkflowStaticData(\"global\");\nconst seen = staticData.seenEventIds || {};\nconst now = Date.now();\nfor (const [id, at] of Object.entries(seen)) {\n  if (now - at > DEDUPE_WINDOW_MS) delete seen[id];\n}\nstaticData.seenEventIds = seen;\n\nreturn [{ json: { valid: true, duplicate: Boolean(seen[event.eventId]), event } }];\n"
+      }
+    },
+    {
+      "id": "1f000000-0000-4000-8000-000000000003",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1fc00000-0000-4000-8000-000000000004",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2e500000-0000-4000-8000-000000000005",
+      "name": "Reject (401)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        480
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"invalid signature\" } }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "1f000000-0000-4000-8000-000000000006",
+      "name": "Already handled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1fc00000-0000-4000-8000-000000000007",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2e500000-0000-4000-8000-000000000008",
+      "name": "Acknowledge duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        60
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"duplicate\" } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000009",
+      "name": "Build message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Turns a request event into a short message for the recipient. Uses only the\n// minimized fields LendLoop sends (first names, tool name, dates).\nconst { event } = $input.first().json;\nconst { recipient, counterpart, tool, dates } = event;\nconst range = `${dates.start} to ${dates.end}`;\n\nconst templates = {\n  \"request.created\": {\n    subject: `${counterpart.firstName} wants to borrow your ${tool.name}`,\n    text: `${counterpart.firstName} asked to borrow your ${tool.name} for ${range}. Open LendLoop to approve or decline.`,\n  },\n  \"request.approved\": {\n    subject: `Your request for the ${tool.name} was approved`,\n    text: `Good news! ${counterpart.firstName} approved your request for the ${tool.name} (${range}).`,\n  },\n  \"request.declined\": {\n    subject: `Your request for the ${tool.name} was declined`,\n    text:\n      event.reason === \"listing_removed\"\n        ? `The ${tool.name} is no longer listed, so your request for ${range} was closed.`\n        : event.reason === \"dates_taken\"\n          ? `The ${tool.name} was booked by someone else for ${range}. Try other dates.`\n          : `${counterpart.firstName} couldn't lend the ${tool.name} for ${range}.`,\n  },\n  \"request.cancelled\": {\n    subject: `${counterpart.firstName} cancelled a request`,\n    text: `${counterpart.firstName} cancelled their request for your ${tool.name} (${range}).`,\n  },\n  \"request.returned\": {\n    subject: `Thanks for returning the ${tool.name}`,\n    text: `${counterpart.firstName} marked the ${tool.name} as returned. Thanks for borrowing responsibly!`,\n  },\n};\n\nconst message = templates[event.eventType];\nif (!message) throw new Error(`Unknown event type: ${event.eventType}`);\n\nreturn [\n  {\n    json: {\n      eventId: event.eventId,\n      to: { firstName: recipient.firstName, email: recipient.email },\n      subject: message.subject,\n      text: `Hi ${recipient.firstName}, ${message.text}`,\n      writeback: {\n        requestId: event.requestId,\n        kind: \"notification_sent\",\n        idempotencyKey: `notification:${event.eventId}`,\n      },\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000010",
+      "name": "Send notification (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Mock notification channel: logs the message instead of sending an email.\n// Swap this node for Email (SMTP), Slack or Discord in production; the rest of\n// the workflow stays the same. The email address is masked in logs.\nconst item = $input.first().json;\nconst email = item.to.email || \"\";\nconst masked = email.replace(/^(.).*(@.*)$/, \"$1***$2\") || \"(no email on file)\";\n\nconsole.log(\n  `[LendLoop mock notification] to=${masked} subject=\"${item.subject}\" event=${item.eventId}`,\n);\n\nreturn [{ json: { ...item, sentAt: new Date().toISOString(), channel: \"mock-log\" } }];\n"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000011",
+      "name": "Sign write-back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Signs a write-back to LendLoop: POST /n8n/automation-events.\n// Signed string: `${timestamp}.POST./n8n/automation-events.${body}`.\n// Runs once for each item; expects $json.writeback = { requestId, kind, idempotencyKey, detail? }.\nconst crypto = require(\"crypto\");\n\nconst secret = $env.N8N_TO_LENDLOOP_SECRET;\nif (!secret) throw new Error(\"N8N_TO_LENDLOOP_SECRET is not configured in the n8n environment\");\n\nconst PATH = \"/n8n/automation-events\";\nconst body = JSON.stringify($json.writeback);\nconst timestamp = Math.floor(Date.now() / 1000).toString();\nconst digest = crypto\n  .createHmac(\"sha256\", secret)\n  .update(`${timestamp}.POST.${PATH}.${body}`)\n  .digest(\"hex\");\n\nreturn { json: { body, timestamp, signature: `v1=${digest}` } };\n",
+        "mode": "runOnceForEachItem"
+      }
+    },
+    {
+      "id": "a77e0000-0000-4000-8000-000000000012",
+      "name": "Record notification in LendLoop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_CONVEX_SITE_URL }}/n8n/automation-events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000013",
+      "name": "Mark event handled",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Records the eventId only after LendLoop has accepted the write-back. If the\n// notification or the write-back fails, LendLoop's retry is processed again\n// (the write-back is idempotent on the LendLoop side), and a retry after full\n// success is recognized as a duplicate.\nconst eventId = $(\"Send notification (mock)\").first().json.eventId;\nconst staticData = $getWorkflowStaticData(\"global\");\nstaticData.seenEventIds = staticData.seenEventIds || {};\nstaticData.seenEventIds[eventId] = Date.now();\nreturn $input.all();\n"
+      }
+    },
+    {
+      "id": "2e500000-0000-4000-8000-000000000014",
+      "name": "Acknowledge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"ok\" } }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Request event webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Already handled?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject (401)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already handled?": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build message": {
+      "main": [
+        [
+          {
+            "node": "Send notification (mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send notification (mock)": {
+      "main": [
+        [
+          {
+            "node": "Sign write-back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign write-back": {
+      "main": [
+        [
+          {
+            "node": "Record notification in LendLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record notification in LendLoop": {
+      "main": [
+        [
+          {
+            "node": "Mark event handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark event handled": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "LLErrorHandler01"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

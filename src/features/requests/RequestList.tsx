@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { formatDate } from "@/features/tools/labels";
 import { getErrorMessage } from "@/lib/errors";
+import { AutomationActivity } from "./AutomationActivity";
 import { RequestStatusBadge } from "./RequestStatusBadge";
 
 export type RequestRow = FunctionReturnType<typeof api.borrowRequests.listMine>[number];
@@ -62,6 +63,7 @@ export function RequestList({
                     &ldquo;{row.message}&rdquo;
                   </p>
                 ) : null}
+                <AutomationActivity activity={row.activity} />
               </div>
               <div className="flex shrink-0 gap-2">{actions(row)}</div>
             </Card>

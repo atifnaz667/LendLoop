@@ -1,0 +1,133 @@
+{
+  "id": "LLErrorHandler01",
+  "name": "LendLoop - Error handler",
+  "active": false,
+  "nodes": [
+    {
+      "id": "e4400000-0000-4000-8000-000000000024",
+      "name": "On workflow error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000025",
+      "name": "Log failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Error workflow: every failed LendLoop execution lands here, so failures are\n// visible in logs (and optionally in Slack/Discord) instead of failing silently.\nconst { execution = {}, workflow = {} } = $input.first().json;\nconst summary = {\n  workflow: workflow.name,\n  executionId: execution.id,\n  url: execution.url,\n  failedNode: execution.lastNodeExecuted,\n  message: execution.error && execution.error.message,\n  at: new Date().toISOString(),\n};\nconsole.error(`[LendLoop automation failure] ${JSON.stringify(summary)}`);\n\nreturn [\n  {\n    json: {\n      ...summary,\n      // Slack and Discord incoming webhooks both accept a \"text\"/\"content\" field.\n      text: `LendLoop automation failed: ${summary.workflow} at node \"${summary.failedNode}\": ${summary.message}. ${summary.url || \"\"}`,\n      content: `LendLoop automation failed: ${summary.workflow} at node \"${summary.failedNode}\": ${summary.message}. ${summary.url || \"\"}`,\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "1f000000-0000-4000-8000-000000000026",
+      "name": "Alert webhook configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1fc00000-0000-4000-8000-000000000027",
+              "leftValue": "={{ !!$env.LENDLOOP_ALERT_WEBHOOK_URL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1e70000-0000-4000-8000-000000000028",
+      "name": "Send alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_ALERT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text, content: $json.content }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "On workflow error": {
+      "main": [
+        [
+          {
+            "node": "Log failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log failure": {
+      "main": [
+        [
+          {
+            "node": "Alert webhook configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert webhook configured?": {
+      "main": [
+        [
+          {
+            "node": "Send alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

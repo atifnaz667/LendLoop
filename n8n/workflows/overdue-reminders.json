@@ -1,0 +1,287 @@
+{
+  "id": "LLOverdueRemind1",
+  "name": "LendLoop - Overdue reminders",
+  "active": false,
+  "nodes": [
+    {
+      "id": "5c4e0000-0000-4000-8000-000000000015",
+      "name": "Every day at 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3a400000-0000-4000-8000-000000000016",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000017",
+      "name": "Sign request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Signs GET /n8n/overdue-loans. Signed string: `${timestamp}.GET./n8n/overdue-loans.` (empty body).\nconst crypto = require(\"crypto\");\n\nconst secret = $env.N8N_TO_LENDLOOP_SECRET;\nif (!secret) throw new Error(\"N8N_TO_LENDLOOP_SECRET is not configured in the n8n environment\");\n\nconst PATH = \"/n8n/overdue-loans\";\nconst timestamp = Math.floor(Date.now() / 1000).toString();\nconst digest = crypto\n  .createHmac(\"sha256\", secret)\n  .update(`${timestamp}.GET.${PATH}.`)\n  .digest(\"hex\");\n\nreturn [{ json: { timestamp, signature: `v1=${digest}` } }];\n"
+      }
+    },
+    {
+      "id": "9e700000-0000-4000-8000-000000000018",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.LENDLOOP_CONVEX_SITE_URL }}/n8n/overdue-loans",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000019",
+      "name": "Split overdue loans",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// One item per overdue loan. An empty list ends the run (nothing to remind).\nconst { loans = [], asOf } = $input.first().json;\nreturn loans.map((loan) => ({ json: { ...loan, asOf } }));\n"
+      }
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000020",
+      "name": "Send reminder (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Mock reminder: logs instead of emailing. Throws when the reminder cannot be\n// sent, which routes the item to the \"failed\" branch and records reminder_failed.\n// Set LENDLOOP_SIMULATE_REMINDER_FAILURE=true to demo the failure path.\nif ($env.LENDLOOP_SIMULATE_REMINDER_FAILURE === \"true\") {\n  throw new Error(\"Simulated reminder failure\");\n}\nconst loan = $json;\nif (!loan.borrower.email) throw new Error(\"Borrower has no email on file\");\n\nconst masked = loan.borrower.email.replace(/^(.).*(@.*)$/, \"$1***$2\");\nconst dayWord = loan.daysOverdue === 1 ? \"day\" : \"days\";\nconsole.log(\n  `[LendLoop mock reminder] to=${masked} \"Hi ${loan.borrower.firstName}, the ${loan.tool.name} was due back ${loan.daysOverdue} ${dayWord} ago (${loan.endDate}). Please return it soon.\"`,\n);\n\nreturn {\n  json: {\n    writeback: {\n      requestId: loan.requestId,\n      kind: \"reminder_sent\",\n      idempotencyKey: loan.idempotencyKey,\n    },\n  },\n};\n",
+        "mode": "runOnceForEachItem"
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000021",
+      "name": "Reminder failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// Error branch of \"Send reminder\": record reminder_failed so the failure is\n// visible on the loan in LendLoop. Uses the same idempotency key family with a\n// \":failed\" suffix, so a later successful retry is still recorded.\nconst loan = $(\"Split overdue loans\").item.json;\nconst reason = ($json.error && ($json.error.message || $json.error)) || \"Unknown error\";\n\nreturn {\n  json: {\n    writeback: {\n      requestId: loan.requestId,\n      kind: \"reminder_failed\",\n      idempotencyKey: `${loan.idempotencyKey}:failed`,\n      detail: String(reason).slice(0, 300),\n    },\n  },\n};\n",
+        "mode": "runOnceForEachItem"
+      }
+    },
+    {
+      "id": "c0de0000-0000-4000-8000-000000000022",
+      "name": "Sign write-back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Signs a write-back to LendLoop: POST /n8n/automation-events.\n// Signed string: `${timestamp}.POST./n8n/automation-events.${body}`.\n// Runs once for each item; expects $json.writeback = { requestId, kind, idempotencyKey, detail? }.\nconst crypto = require(\"crypto\");\n\nconst secret = $env.N8N_TO_LENDLOOP_SECRET;\nif (!secret) throw new Error(\"N8N_TO_LENDLOOP_SECRET is not configured in the n8n environment\");\n\nconst PATH = \"/n8n/automation-events\";\nconst body = JSON.stringify($json.writeback);\nconst timestamp = Math.floor(Date.now() / 1000).toString();\nconst digest = crypto\n  .createHmac(\"sha256\", secret)\n  .update(`${timestamp}.POST.${PATH}.${body}`)\n  .digest(\"hex\");\n\nreturn { json: { body, timestamp, signature: `v1=${digest}` } };\n",
+        "mode": "runOnceForEachItem"
+      }
+    },
+    {
+      "id": "a77e0000-0000-4000-8000-000000000023",
+      "name": "Record reminder in LendLoop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_CONVEX_SITE_URL }}/n8n/automation-events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Every day at 09:00": {
+      "main": [
+        [
+          {
+            "node": "Sign request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Sign request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign request": {
+      "main": [
+        [
+          {
+            "node": "Fetch overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch overdue loans": {
+      "main": [
+        [
+          {
+            "node": "Split overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split overdue loans": {
+      "main": [
+        [
+          {
+            "node": "Send reminder (mock)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder (mock)": {
+      "main": [
+        [
+          {
+            "node": "Sign write-back",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reminder failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reminder failed": {
+      "main": [
+        [
+          {
+            "node": "Sign write-back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign write-back": {
+      "main": [
+        [
+          {
+            "node": "Record reminder in LendLoop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "LLErrorHandler01"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

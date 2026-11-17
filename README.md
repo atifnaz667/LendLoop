@@ -91,31 +91,51 @@ If your email is not on the profile yet (the webhook fills it), pass `"clerkUser
 
 Reload the app and the **Admin** tab appears.
 
-### 6. n8n
+### 6. n8n (automation)
+
+Full walkthrough in [n8n workflows](#n8n-workflows). Short version:
 
 ```bash
-cp n8n/.env.example n8n/.env      # fill in the values
-docker compose up -d              # http://localhost:5678
+# 1. Two shared secrets, one per direction (Git Bash on Windows has openssl)
+openssl rand -hex 32   # -> LENDLOOP_TO_N8N_SECRET
+openssl rand -hex 32   # -> N8N_TO_LENDLOOP_SECRET
+npx convex env set LENDLOOP_TO_N8N_SECRET <first>
+npx convex env set N8N_TO_LENDLOOP_SECRET <second>
+
+# 2. n8n container config
+cp n8n/.env.example n8n/.env      # fill in the same two secrets + the other values
+
+# 3. Start n8n plus a public tunnel (Convex cloud must be able to reach the webhook)
+docker compose --profile tunnel up -d
+docker compose logs tunnel        # copy the https://<random>.trycloudflare.com URL
+
+# 4. Import the three workflows (keeps their ids so the error workflow link works)
+npm run n8n:import
+
+# 5. Point Convex at the webhook
+npx convex env set N8N_REQUEST_WEBHOOK_URL https://<random>.trycloudflare.com/webhook/lendloop-request-events
 ```
 
-Workflow import and the Convex webhook URL setup are described in
-[n8n workflows](#n8n-workflows) _(coming in module 5)_.
+Then open http://localhost:5678, create the n8n owner account, and **activate** "LendLoop - Request
+notification" and "LendLoop - Overdue reminders".
 
 ## Environment variables
 
-| Variable                            | Where                   | Purpose                                                   |
-| ----------------------------------- | ----------------------- | --------------------------------------------------------- |
-| `NEXT_PUBLIC_CONVEX_URL`            | `.env.local`            | Convex client URL (written by `npx convex dev`).          |
-| `CONVEX_DEPLOYMENT`                 | `.env.local`            | Convex dev deployment name (written by `npx convex dev`). |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `.env.local`            | Clerk publishable key (browser safe).                     |
-| `CLERK_SECRET_KEY`                  | `.env.local`            | Clerk secret key (server only).                           |
-| `CLERK_FRONTEND_API_URL`            | Convex env              | Issuer Convex trusts for Clerk JWTs.                      |
-| `CLERK_WEBHOOK_SIGNING_SECRET`      | Convex env              | Verifies Clerk user webhooks (Svix signature).            |
-| `N8N_REQUEST_WEBHOOK_URL`           | Convex env              | n8n webhook for request events _(module 5)_.              |
-| `LENDLOOP_TO_N8N_SECRET`            | Convex env + `n8n/.env` | HMAC secret, Convex to n8n _(module 5)_.                  |
-| `N8N_TO_LENDLOOP_SECRET`            | Convex env + `n8n/.env` | HMAC secret, n8n to Convex _(module 5)_.                  |
-| `N8N_ENCRYPTION_KEY`                | `n8n/.env`              | Encrypts n8n credentials at rest.                         |
-| `LENDLOOP_CONVEX_SITE_URL`          | `n8n/.env`              | Convex HTTP actions base URL (`.convex.site`).            |
+| Variable                             | Where                   | Purpose                                                   |
+| ------------------------------------ | ----------------------- | --------------------------------------------------------- |
+| `NEXT_PUBLIC_CONVEX_URL`             | `.env.local`            | Convex client URL (written by `npx convex dev`).          |
+| `CONVEX_DEPLOYMENT`                  | `.env.local`            | Convex dev deployment name (written by `npx convex dev`). |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`  | `.env.local`            | Clerk publishable key (browser safe).                     |
+| `CLERK_SECRET_KEY`                   | `.env.local`            | Clerk secret key (server only).                           |
+| `CLERK_FRONTEND_API_URL`             | Convex env              | Issuer Convex trusts for Clerk JWTs.                      |
+| `CLERK_WEBHOOK_SIGNING_SECRET`       | Convex env              | Verifies Clerk user webhooks (Svix signature).            |
+| `N8N_REQUEST_WEBHOOK_URL`            | Convex env              | n8n webhook URL for request events.                       |
+| `LENDLOOP_TO_N8N_SECRET`             | Convex env + `n8n/.env` | HMAC secret, Convex to n8n.                               |
+| `N8N_TO_LENDLOOP_SECRET`             | Convex env + `n8n/.env` | HMAC secret, n8n to Convex.                               |
+| `N8N_ENCRYPTION_KEY`                 | `n8n/.env`              | Encrypts n8n credentials at rest.                         |
+| `LENDLOOP_CONVEX_SITE_URL`           | `n8n/.env`              | Convex HTTP actions base URL (`.convex.site`).            |
+| `LENDLOOP_ALERT_WEBHOOK_URL`         | `n8n/.env` (optional)   | Slack or Discord webhook for failed-run alerts.           |
+| `LENDLOOP_SIMULATE_REMINDER_FAILURE` | `n8n/.env` (optional)   | `true` to demo the reminder failure path.                 |
 
 Generate secrets with `openssl rand -hex 32`. No secret is ever committed; `.env*` files are git
 ignored except the examples.
@@ -136,7 +156,75 @@ _(Completed in module 6; design is in [docs/architecture.md](docs/architecture.m
 
 ## n8n workflows
 
-_(coming in module 5)_
+Three workflows live in `n8n/workflows/` as exported JSON. Their Code node logic is kept as plain,
+reviewed and unit tested files in `n8n/code/`, and `npm run n8n:build` regenerates the JSON from them.
+A test fails if the JSON and the code drift apart.
+
+| Workflow                            | Trigger                                         | What it does                                                                                                                                                          |
+| ----------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **LendLoop - Request notification** | Webhook `POST /webhook/lendloop-request-events` | Verifies the HMAC signature and timestamp, skips duplicate `eventId`s, builds a short message, sends it (mock log), then writes `notification_sent` back to LendLoop. |
+| **LendLoop - Overdue reminders**    | Daily at 09:00 (plus a manual trigger)          | Signs and calls `GET /n8n/overdue-loans`, sends one reminder per borrower (mock log), and writes `reminder_sent` or `reminder_failed` back for each loan.             |
+| **LendLoop - Error handler**        | Error Trigger                                   | Both workflows point to it. Logs the failed workflow, node, message and execution URL, and posts to Slack or Discord when `LENDLOOP_ALERT_WEBHOOK_URL` is set.        |
+
+### Events Convex sends
+
+`request.created` (to the owner), `request.approved`, `request.declined` (to the borrower, with a
+`reason` when it was auto-declined), `request.cancelled` (to the owner) and `request.returned` (to the
+borrower). Example payload, which is everything the workflow receives:
+
+```json
+{
+  "eventId": "6f0c...",
+  "eventType": "request.approved",
+  "occurredAt": 1794900000000,
+  "requestId": "k57...",
+  "recipient": { "role": "borrower", "firstName": "Ben", "email": "ben@example.com" },
+  "counterpart": { "firstName": "Olivia" },
+  "tool": { "name": "Cordless drill" },
+  "dates": { "start": "2026-11-18", "end": "2026-11-20" }
+}
+```
+
+### Endpoints n8n calls
+
+| Endpoint                      | Purpose                                                                                                                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /n8n/overdue-loans`      | Approved loans past their end date that have not had a reminder today. Fields: request id, borrower first name and email, tool name, end date, days overdue, idempotency key. |
+| `POST /n8n/automation-events` | Write-back `{ requestId, kind, idempotencyKey, detail? }`. Returns `200 {status:"created"}` or `200 {status:"duplicate"}` for a retry.                                        |
+
+Both live on the Convex HTTP actions URL (`https://<deployment>.convex.site`) and reject anything
+without a valid signature and fresh timestamp (`401`).
+
+### Reliability
+
+- **Outbox with retries.** Convex writes the event in the same transaction as the status change, then
+  delivers it from a scheduled action: 5 attempts with backoff (30s, 2m, 8m, 32m), a lease so an event
+  is never sent twice at once, and a cron sweep every 5 minutes as a safety net. 4xx responses are not
+  retried. Permanently failed events show on the **Admin** page with a **Retry** button.
+- **Idempotency.** n8n deduplicates on `eventId`. Write-backs use `notification:<eventId>` and
+  `reminder:<requestId>:<YYYY-MM-DD>` keys, and Convex stores each key once (serializable mutations),
+  so retries never create duplicate records or reminders.
+- **n8n retries.** HTTP nodes and the send nodes use Retry On Fail. A reminder that still fails goes
+  down the error branch and records `reminder_failed`; an unexpected failure triggers the error workflow.
+- **Visible activity.** Each loan shows its latest automation steps, for example "Reminder sent 2 days
+  ago", in My requests, Incoming requests and the admin loans table.
+
+### Try it
+
+1. Request a tool as one user. In n8n, **Executions** shows a run of "Request notification",
+   `docker compose logs n8n` shows `[LendLoop mock notification]`, and the request shows
+   "Notification sent just now".
+2. Approve it, then in the Convex dashboard (**Data > borrowRequests**) set its `endDate` to a past
+   date. Open "Overdue reminders" in n8n and click **Execute workflow**. The loan shows "Reminder sent
+   just now". Run it again: nothing new is sent (already reminded today).
+3. Failure path: set `LENDLOOP_SIMULATE_REMINDER_FAILURE=true` in `n8n/.env`, run
+   `docker compose up -d`, execute the workflow again for another overdue loan. The loan shows
+   "Reminder failed".
+4. Delivery failure: stop n8n (`docker compose stop n8n`) and approve a request. After the retries the
+   Admin page lists the failed delivery. Start n8n again and click **Retry**.
+
+The quick tunnel URL changes every time the tunnel restarts. Update `N8N_REQUEST_WEBHOOK_URL` when it
+does (production uses a stable domain).
 
 ## Testing
 
@@ -147,10 +235,13 @@ npm test          # unit tests and convex-test function tests
 
 ## Troubleshooting
 
-| Symptom                                                                                  | Cause and fix                                                                                                                                                                             |
-| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browser console loops on `WebSocket closed with code 1006` and the page looks signed out | A browser extension (ad blocker, privacy or VPN extension) or antivirus web shield is blocking the Convex WebSocket. Allow `localhost` and `*.convex.cloud`, or test in a private window. |
-| Yellow banner "the LendLoop server didn't accept your session"                           | `CLERK_FRONTEND_API_URL` is missing or wrong on the Convex deployment, or the Convex integration is not activated in Clerk. Check with `npx convex env list`.                             |
+| Symptom                                                                                  | Cause and fix                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Browser console loops on `WebSocket closed with code 1006` and the page looks signed out | A browser extension (ad blocker, privacy or VPN extension) or antivirus web shield is blocking the Convex WebSocket. Allow `localhost` and `*.convex.cloud`, or test in a private window.                    |
+| Yellow banner "the LendLoop server didn't accept your session"                           | `CLERK_FRONTEND_API_URL` is missing or wrong on the Convex deployment, or the Convex integration is not activated in Clerk. Check with `npx convex env list`.                                                |
+| n8n exits with `Mismatching encryption keys`                                             | `N8N_ENCRYPTION_KEY` was set or changed after n8n first started, and n8n already saved a different key in its volume. Restore the original value, or comment the line out so n8n keeps using the saved key.  |
+| Admin "Automation health" shows `n8n responded 404`                                      | `N8N_REQUEST_WEBHOOK_URL` does not match the published webhook. It must be `https://<tunnel>/webhook/lendloop-request-events`, the tunnel host changes on every restart, and the workflow must be published. |
+| n8n execution fails at "Record notification in LendLoop" with "not found"                | `LENDLOOP_CONVEX_SITE_URL` in `n8n/.env` is wrong. Use your deployment's `.convex.site` URL (not `.convex.cloud`), then run `docker compose up -d --force-recreate n8n`.                                     |
 
 ## Running in production
 
