@@ -9,6 +9,7 @@ import * as userModel from "../models/userModel";
 import type { UserDoc } from "../models/userModel";
 import { LIMITS, type ToolCategory, type ToolCondition } from "../shared/constants";
 import { canEditTool, canRemoveAnyTool, isAdmin } from "./policy";
+import { declinePendingForTool } from "./requestService";
 
 export interface ToolInput {
   name: string;
@@ -166,6 +167,7 @@ export async function removeOwn(ctx: MutationCtx, actor: UserDoc, toolId: Id<"to
   if (!canEditTool(actor, tool)) throw forbidden("You can only delete your own listings.");
   await assertNotOnActiveLoan(ctx, toolId);
   await toolModel.patch(ctx, toolId, { removedAt: Date.now(), removedBy: actor._id });
+  await declinePendingForTool(ctx, toolId);
 }
 
 /**
@@ -176,4 +178,5 @@ export async function adminRemove(ctx: MutationCtx, actor: UserDoc, toolId: Id<"
   if (!isAdmin(actor)) throw forbidden("Admins only.");
   await requireTool(ctx, toolId);
   await toolModel.patch(ctx, toolId, { removedAt: Date.now(), removedBy: actor._id });
+  await declinePendingForTool(ctx, toolId);
 }

@@ -1,21 +1,17 @@
 import type { Metadata } from "next";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { IncomingRequests } from "@/features/requests/IncomingRequests";
 
 export const metadata: Metadata = { title: "Incoming requests" };
 
-/** Placeholder until module 4 lands (see docs/roadmap.md). */
-export default function Page() {
+export default function IncomingPage() {
   return (
     <>
       <PageHeader
         title="Incoming requests"
-        description="Requests from neighbors to borrow your tools."
+        description="Approve or decline requests for your tools, and mark loans as returned."
       />
-      <EmptyState
-        title="No incoming requests"
-        description="This view arrives in the next update."
-      />
+      <IncomingRequests />
     </>
   );
 }

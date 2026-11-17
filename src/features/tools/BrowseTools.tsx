@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { RequestForm } from "@/features/requests/RequestForm";
 import { getErrorMessage } from "@/lib/errors";
 import { AvailabilityBadge } from "./AvailabilityBadge";
 import { CategoryFilter } from "./CategoryFilter";
@@ -30,6 +31,8 @@ export function BrowseTools() {
   const adminRemove = useMutation(api.tools.adminRemove);
   const [confirmId, setConfirmId] = useState<Id<"tools"> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [requestingId, setRequestingId] = useState<Id<"tools"> | null>(null);
+  const [sentId, setSentId] = useState<Id<"tools"> | null>(null);
 
   function setCategory(next: ToolCategory | undefined) {
     const query = next ? `?category=${next}` : "";
@@ -88,23 +91,44 @@ export function BrowseTools() {
                       <Badge tone="green">Trusted Lender</Badge>
                     ) : null}
                   </div>
-                  {tool.canRemove ? (
-                    confirmId === tool._id ? (
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="ghost" onClick={() => setConfirmId(null)}>
-                          Keep
+                  <div className="flex gap-2">
+                    {!tool.isMine && requestingId !== tool._id ? (
+                      sentId === tool._id ? (
+                        <span className="text-sm text-brand-700">Request sent</span>
+                      ) : (
+                        <Button size="sm" onClick={() => setRequestingId(tool._id)}>
+                          Request to borrow
                         </Button>
-                        <Button size="sm" variant="danger" onClick={() => remove(tool._id)}>
-                          Confirm remove
+                      )
+                    ) : null}
+                    {tool.canRemove ? (
+                      confirmId === tool._id ? (
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="ghost" onClick={() => setConfirmId(null)}>
+                            Keep
+                          </Button>
+                          <Button size="sm" variant="danger" onClick={() => remove(tool._id)}>
+                            Confirm remove
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button size="sm" variant="ghost" onClick={() => setConfirmId(tool._id)}>
+                          Remove
                         </Button>
-                      </div>
-                    ) : (
-                      <Button size="sm" variant="ghost" onClick={() => setConfirmId(tool._id)}>
-                        Remove
-                      </Button>
-                    )
-                  ) : null}
+                      )
+                    ) : null}
+                  </div>
                 </div>
+                {requestingId === tool._id ? (
+                  <RequestForm
+                    toolId={tool._id}
+                    onCancel={() => setRequestingId(null)}
+                    onDone={() => {
+                      setRequestingId(null);
+                      setSentId(tool._id);
+                    }}
+                  />
+                ) : null}
               </Card>
             </li>
           ))}
