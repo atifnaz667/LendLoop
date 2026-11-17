@@ -18,20 +18,32 @@ const json = (status: number, body: Record<string, unknown>) =>
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 
+/**
+ * Accepts the current secret and, during a rotation, the previous one
+ * (N8N_TO_LENDLOOP_SECRET_PREVIOUS), so n8n and Convex can be updated one at a
+ * time without dropping requests. Remove the previous secret once n8n uses the new one.
+ */
 async function authenticate(request: Request, body: string) {
-  const secret = process.env.N8N_TO_LENDLOOP_SECRET;
-  if (!secret) {
+  const current = process.env.N8N_TO_LENDLOOP_SECRET;
+  if (!current) {
     console.error("N8N_TO_LENDLOOP_SECRET is not set");
     return json(500, { error: "Integration not configured" });
   }
-  const result = await verifyInbound({
-    secret,
+  const secrets = [current, process.env.N8N_TO_LENDLOOP_SECRET_PREVIOUS].filter((s): s is string =>
+    Boolean(s),
+  );
+  const params = {
     method: request.method,
     path: new URL(request.url).pathname,
     body,
     timestamp: request.headers.get(TIMESTAMP_HEADER),
     signature: request.headers.get(SIGNATURE_HEADER),
-  });
+  };
+  let result = await verifyInbound({ secret: secrets[0]!, ...params });
+  for (const secret of secrets.slice(1)) {
+    if (result.ok || result.reason !== "signature mismatch") break;
+    result = await verifyInbound({ secret, ...params });
+  }
   if (!result.ok) {
     console.warn(`Rejected n8n request: ${result.reason}`);
     return json(401, { error: "Invalid signature" });
@@ -78,6 +90,9 @@ function parseEventBody(raw: string): EventBody | string {
 
 /** POST /n8n/automation-events (idempotent write-back) */
 export const postAutomationEvent = httpAction(async (ctx, request) => {
+  // Refuse obviously oversized bodies before reading them.
+  const declared = Number(request.headers.get("content-length") ?? 0);
+  if (declared > MAX_BODY_BYTES) return json(413, { error: "Body too large" });
   const body = await request.text();
   if (body.length > MAX_BODY_BYTES) return json(413, { error: "Body too large" });
 

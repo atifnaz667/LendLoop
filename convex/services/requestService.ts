@@ -81,6 +81,12 @@ export async function create(ctx: MutationCtx, actor: UserDoc, input: RequestInp
   if (pending.some((r) => r.borrowerId === actor._id && rangesOverlap(r, range))) {
     throw conflict("You already have a pending request for these dates.");
   }
+  const mine = await requestModel.listByBorrower(ctx, actor._id);
+  if (mine.filter((r) => r.status === "pending").length >= LIMITS.maxPendingRequestsPerBorrower) {
+    throw conflict(
+      `You can have at most ${LIMITS.maxPendingRequestsPerBorrower} pending requests. Cancel one first.`,
+    );
+  }
 
   const requestId = await requestModel.insert(ctx, {
     toolId: tool._id,

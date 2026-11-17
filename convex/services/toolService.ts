@@ -138,6 +138,10 @@ export async function listMine(ctx: QueryCtx, actor: UserDoc) {
 
 export async function create(ctx: MutationCtx, actor: UserDoc, input: ToolInput) {
   const clean = validateToolInput(input);
+  const listed = await toolModel.listListedByOwner(ctx, actor._id);
+  if (listed.length >= LIMITS.maxListedToolsPerOwner) {
+    throw validation(`You can list at most ${LIMITS.maxListedToolsPerOwner} tools.`);
+  }
   return toolModel.insert(ctx, { ...clean, ownerId: actor._id });
 }
 
