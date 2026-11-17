@@ -22,9 +22,11 @@ export default defineSchema({
     name: v.string(),
     role: vRole,
     isTrustedLender: v.boolean(),
+    /** Set when the Clerk account is deleted. Personal fields are cleared at the same time. */
+    deletedAt: v.optional(v.number()),
   })
     .index("by_clerkUserId", ["clerkUserId"])
-    .index("by_role", ["role"]),
+    .index("by_email", ["email"]),
 
   tools: defineTable({
     ownerId: v.id("users"),

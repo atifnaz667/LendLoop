@@ -17,7 +17,7 @@ export function AuthControls() {
 
   if (!isSignedIn) {
     return (
-      <SignInButton mode="modal">
+      <SignInButton mode="modal" fallbackRedirectUrl="/tools">
         <Button size="sm">Sign in</Button>
       </SignInButton>
     );

@@ -38,6 +38,16 @@ cp .env.example .env.local
 3. Open **Integrations > Convex** (Convex integration setup page), activate it, and copy the
    **Frontend API URL** (looks like `https://verb-noun-00.clerk.accounts.dev`).
 
+4. Open **Sessions > Customize session token** and add the claims LendLoop reads (Clerk's default
+   token has no email or name):
+
+```json
+{
+  "email": "{{user.primary_email_address}}",
+  "name": "{{user.full_name}}"
+}
+```
+
 ### 2. Convex
 
 ```bash
@@ -54,7 +64,34 @@ together.
 npm run dev               # http://localhost:3000
 ```
 
-### 4. n8n
+### 4. Clerk webhook (keeps profiles in sync)
+
+1. In the Clerk Dashboard open **Webhooks > Add endpoint**.
+2. Endpoint URL: `https://<your-deployment>.convex.site/clerk/webhook` (your `NEXT_PUBLIC_CONVEX_SITE_URL`
+   plus `/clerk/webhook`).
+3. Subscribe to `user.created`, `user.updated` and `user.deleted`.
+4. Copy the endpoint's **Signing Secret** and set it on Convex:
+
+```bash
+npx convex env set CLERK_WEBHOOK_SIGNING_SECRET whsec_...
+```
+
+The app also creates your profile on first sign-in, so it works before the webhook is set up. The
+webhook keeps name and email current and anonymizes the profile when a Clerk account is deleted.
+
+### 5. Make yourself an admin
+
+Sign in once so your profile exists, then promote it. Roles can only be changed this way (no UI or
+public API can change a role):
+
+- **Convex dashboard:** Functions > `users:setRole` > Run, with `{ "email": "you@example.com", "role": "admin" }`
+- **or CLI (PowerShell):** `npx convex run users:setRole '{\"email\":\"you@example.com\",\"role\":\"admin\"}'`
+
+If your email is not on the profile yet (the webhook fills it), pass `"clerkUserId": "user_..."` instead, copied from the Clerk Dashboard user page.
+
+Reload the app and the **Admin** tab appears.
+
+### 6. n8n
 
 ```bash
 cp n8n/.env.example n8n/.env      # fill in the values
@@ -73,7 +110,7 @@ Workflow import and the Convex webhook URL setup are described in
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `.env.local`            | Clerk publishable key (browser safe).                     |
 | `CLERK_SECRET_KEY`                  | `.env.local`            | Clerk secret key (server only).                           |
 | `CLERK_FRONTEND_API_URL`            | Convex env              | Issuer Convex trusts for Clerk JWTs.                      |
-| `CLERK_WEBHOOK_SIGNING_SECRET`      | Convex env              | Verifies Clerk user webhooks _(module 2)_.                |
+| `CLERK_WEBHOOK_SIGNING_SECRET`      | Convex env              | Verifies Clerk user webhooks (Svix signature).            |
 | `N8N_REQUEST_WEBHOOK_URL`           | Convex env              | n8n webhook for request events _(module 5)_.              |
 | `LENDLOOP_TO_N8N_SECRET`            | Convex env + `n8n/.env` | HMAC secret, Convex to n8n _(module 5)_.                  |
 | `N8N_TO_LENDLOOP_SECRET`            | Convex env + `n8n/.env` | HMAC secret, n8n to Convex _(module 5)_.                  |
@@ -110,10 +147,10 @@ npm test          # unit tests and convex-test function tests
 
 ## Troubleshooting
 
-| Symptom | Cause and fix |
-| --- | --- |
+| Symptom                                                                                  | Cause and fix                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Browser console loops on `WebSocket closed with code 1006` and the page looks signed out | A browser extension (ad blocker, privacy or VPN extension) or antivirus web shield is blocking the Convex WebSocket. Allow `localhost` and `*.convex.cloud`, or test in a private window. |
-| Yellow banner "the LendLoop server didn't accept your session" | `CLERK_FRONTEND_API_URL` is missing or wrong on the Convex deployment, or the Convex integration is not activated in Clerk. Check with `npx convex env list`. |
+| Yellow banner "the LendLoop server didn't accept your session"                           | `CLERK_FRONTEND_API_URL` is missing or wrong on the Convex deployment, or the Convex integration is not activated in Clerk. Check with `npx convex env list`.                             |
 
 ## Running in production
 
