@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Validator } from "convex/values";
 import {
   AUTOMATION_EVENT_KINDS,
   REQUEST_STATUSES,
@@ -8,9 +8,16 @@ import {
 } from "../shared/constants";
 
 /** Builds a Convex union validator from a readonly tuple of string literals. */
-function literalUnion<T extends readonly [string, string, ...string[]]>(values: T) {
+function literalUnion<T extends readonly [string, string, ...string[]]>(
+  values: T,
+): Validator<T[number], "required", never> {
   const [a, b, ...rest] = values;
-  return v.union(v.literal(a), v.literal(b), ...rest.map((value) => v.literal(value)));
+  // v.union loses the literal types when spread from an array, so restore them here.
+  return v.union(
+    v.literal(a),
+    v.literal(b),
+    ...rest.map((value) => v.literal(value)),
+  ) as unknown as Validator<T[number], "required", never>;
 }
 
 export const vRole = literalUnion(ROLES);
