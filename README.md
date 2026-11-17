@@ -7,9 +7,6 @@ from each other, and get automated notifications and overdue reminders handled b
 
 **Stack:** Next.js 16 (App Router) + TypeScript, Clerk, Convex, n8n (self-hosted in Docker), Tailwind CSS.
 
-> This README grows with each module. Sections marked _(coming in module N)_ are planned in
-> [docs/roadmap.md](docs/roadmap.md).
-
 ## Contents
 
 - [Quick start](#quick-start)
@@ -18,6 +15,7 @@ from each other, and get automated notifications and overdue reminders handled b
 - [Security and data minimization](#security-and-data-minimization)
 - [n8n workflows](#n8n-workflows)
 - [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
 - [Running in production](#running-in-production)
 
 ## Quick start
@@ -132,6 +130,7 @@ notification" and "LendLoop - Overdue reminders".
 | `N8N_REQUEST_WEBHOOK_URL`            | Convex env              | n8n webhook URL for request events.                       |
 | `LENDLOOP_TO_N8N_SECRET`             | Convex env + `n8n/.env` | HMAC secret, Convex to n8n.                               |
 | `N8N_TO_LENDLOOP_SECRET`             | Convex env + `n8n/.env` | HMAC secret, n8n to Convex.                               |
+| `N8N_TO_LENDLOOP_SECRET_PREVIOUS`    | Convex env (optional)   | Old n8n to Convex secret, accepted only during rotation.  |
 | `N8N_ENCRYPTION_KEY`                 | `n8n/.env`              | Encrypts n8n credentials at rest.                         |
 | `LENDLOOP_CONVEX_SITE_URL`           | `n8n/.env`              | Convex HTTP actions base URL (`.convex.site`).            |
 | `LENDLOOP_ALERT_WEBHOOK_URL`         | `n8n/.env` (optional)   | Slack or Discord webhook for failed-run alerts.           |
@@ -152,7 +151,67 @@ See [docs/architecture.md](docs/architecture.md) for the full picture. In short:
 
 ## Security and data minimization
 
-_(Completed in module 6; design is in [docs/architecture.md](docs/architecture.md), sections 4 and 5.)_
+The full design is in [docs/architecture.md](docs/architecture.md), sections 4 and 5. What matters
+most:
+
+**Authentication**
+
+- Clerk handles sign-in. `src/proxy.ts` runs `clerkMiddleware()`, and the signed-in route group
+  calls `auth.protect()` on the server, so signed-out visitors never render a signed-in page.
+- Convex verifies the Clerk JWT (signature, issuer, `convex` audience, expiry) on every call. User
+  records are created from verified token claims, never from client arguments.
+- The Clerk webhook is verified with Svix (signature and timestamp) before the body is parsed.
+
+**Authorization**
+
+- Every Convex query and mutation resolves the caller with `requireUser` or `requireAdmin` and
+  checks a pure policy function (`convex/services/policy.ts`). The UI hides buttons for comfort
+  only; the server is the gate. Tests call functions as the wrong user to prove it.
+- Roles live in Convex. No public function changes a role; the first admin is promoted with an
+  internal mutation that only someone with deployment access can run.
+- Only `convex/models` may touch `ctx.db` (ESLint enforced), so no controller can skip a service
+  and its checks.
+
+**Integration security (Convex and n8n)**
+
+- Both directions are signed with HMAC-SHA256 over the timestamp and raw body (inbound also covers
+  method and path), with a 5 minute replay window and constant-time comparison. Each direction has
+  its own secret.
+- Convex rejects unsigned or stale requests with 401 before reading any data, caps bodies at 4 KB,
+  validates every field, and checks that ids from n8n belong to the right table.
+- Write-backs are idempotent (`reminder:<requestId>:<day>`, `notification:<eventId>`), so n8n
+  retries never create duplicates. The notification workflow also dedupes by event id.
+- Secrets live only in Convex env and `n8n/.env` (read by Code nodes through `$env`). Exported
+  workflow JSON contains no secrets, and CI fails if it ever does
+  (`scripts/check-workflow-secrets.mjs`).
+- Secret rotation without downtime: set `N8N_TO_LENDLOOP_SECRET_PREVIOUS` to the old value, update
+  the secret in Convex, then in n8n, then remove the previous value.
+
+**Abuse limits and safe errors**
+
+- Server-side length limits on all text, at most 30 day loans booked up to 180 days ahead, at most
+  50 listed tools per person and 10 pending requests per borrower.
+- Errors sent to the browser are typed (`AppError` codes) with plain messages. Stack traces and
+  internal details stay in server logs. The route error page shows only a reference id.
+- Security headers: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+  `Permissions-Policy`, and no `X-Powered-By`.
+
+**Data minimization**
+
+| Where                      | What is shared                                                       | What is never shared                     |
+| -------------------------- | -------------------------------------------------------------------- | ---------------------------------------- |
+| Public landing page        | Name and category of available tools                                 | Owners, descriptions, loan details       |
+| Browse and request screens | Lender display name and Trusted Lender badge                         | Emails or any contact details            |
+| Admin screens              | Names, roles, loans, delivery status                                 | Emails                                   |
+| Notification event to n8n  | Event id and type, recipient first name and email, tool name, dates  | The other party's email, user ids, roles |
+| Overdue endpoint for n8n   | Request id, borrower first name and email, tool name, end date, days | Owner details, messages, history         |
+| Logs (Convex and n8n)      | Event ids and outcomes, emails masked (`b***@example.com`)           | Full emails, secrets, signatures         |
+
+- Outbox rows hold a recipient email, so a daily job deletes delivered rows after 7 days and failed
+  ones after 30.
+- When a Clerk user is deleted, the webhook removes their name and email from LendLoop and marks
+  the profile deleted. Deleted users are never contacted.
+- n8n keeps execution data for 14 days (`EXECUTIONS_DATA_MAX_AGE`).
 
 ## n8n workflows
 
@@ -245,4 +304,45 @@ npm test          # unit tests and convex-test function tests
 
 ## Running in production
 
-_(Completed in module 6; summary in [docs/roadmap.md](docs/roadmap.md).)_
+This take-home runs everything locally with a Cloudflare quick tunnel and mock notifications. For
+a real launch I would change the following.
+
+**Environments and deploys**
+
+- Separate Clerk and Convex production instances. CI runs lint, typecheck and tests, then
+  `npx convex deploy` and the Vercel deploy, so schema and functions ship together.
+- Secrets in a secret manager (or the platform env stores), never in files on a laptop.
+
+**n8n**
+
+- Self-host on a managed container platform (or n8n Cloud) with Postgres instead of SQLite, queue
+  mode with Redis and at least one worker, HTTPS on a stable domain instead of a quick tunnel, and
+  SSO or basic auth in front of the editor. Set `N8N_ENCRYPTION_KEY` once and back it up.
+- Keep workflows in Git as they are now (`n8n/code` plus generated JSON) and import them in the
+  deploy pipeline, so production is never edited by hand.
+- Replace the mock notification node with a real provider (Postmark, SES or Resend) using an n8n
+  credential, with a verified sending domain (SPF, DKIM, DMARC) and an unsubscribe link.
+
+**Reliability and monitoring**
+
+- Sentry on the Next.js app and Convex functions, and n8n failure alerts to Slack (the error
+  workflow already supports `LENDLOOP_ALERT_WEBHOOK_URL`).
+- Alert when the outbox has failed deliveries or pending ones older than 15 minutes. The Admin
+  Automation health panel already shows both.
+- Add a reconciliation job that compares overdue loans with recorded reminders, in case n8n is down
+  for a full day.
+
+**Security hardening**
+
+- Enforce a strict Content Security Policy built from Clerk's documented directives plus the Convex
+  domains (currently left out so local development with Clerk dev instances keeps working).
+- Rate limit the public HTTP routes at the edge and add per-user rate limits on mutations (for
+  example with the Convex rate limiter component).
+- Rotate HMAC secrets on a schedule using the previous-secret support.
+- Move from a static board to a real neighborhood model (invite codes or verified addresses) before
+  opening sign-ups to the public.
+
+**Data**
+
+- Pagination instead of the current 200 row caps once a neighborhood grows.
+- A written retention policy, a data export and delete flow for users, and a privacy notice.

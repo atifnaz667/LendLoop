@@ -53,6 +53,12 @@ export const sweep = internalMutation({
   handler: async (ctx) => outboxService.sweepDue(ctx),
 });
 
+/** Daily retention job (see crons.ts). */
+export const purgeOld = internalMutation({
+  args: {},
+  handler: async (ctx) => outboxService.purgeOld(ctx),
+});
+
 export const health = query({
   args: {},
   handler: async (ctx) => outboxService.healthForAdmin(ctx, await requireAdmin(ctx)),

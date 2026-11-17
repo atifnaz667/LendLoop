@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { api } from "@convex/_generated/api";
 import { addDays, todayIso } from "@convex/lib/dates";
+import { LIMITS } from "@convex/shared/constants";
 import { sampleTool, setup, signIn, type TestConvex } from "../helpers/convex";
 
 const today = todayIso();
@@ -116,6 +117,29 @@ describe("borrow requests: creating", () => {
         endDate: days(4),
       }),
     ).rejects.toThrow(/already have a pending/);
+  });
+
+  it("caps how many pending requests one borrower can have", async () => {
+    const t = setup();
+    const { owner, borrower } = await world(t);
+    const toolIds = [];
+    for (let i = 0; i <= LIMITS.maxPendingRequestsPerBorrower; i++) {
+      toolIds.push(await owner.as.mutation(api.tools.create, { ...sampleTool, name: `Tool ${i}` }));
+    }
+    for (const toolId of toolIds.slice(0, -1)) {
+      await borrower.as.mutation(api.borrowRequests.create, {
+        toolId,
+        startDate: days(1),
+        endDate: days(2),
+      });
+    }
+    await expect(
+      borrower.as.mutation(api.borrowRequests.create, {
+        toolId: toolIds.at(-1)!,
+        startDate: days(1),
+        endDate: days(2),
+      }),
+    ).rejects.toThrow(/at most 10 pending/);
   });
 });
 

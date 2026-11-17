@@ -35,3 +35,23 @@ export function listByStatus(ctx: QueryCtx, status: DeliveryDoc["status"], limit
     .order("desc")
     .take(limit);
 }
+
+/**
+ * Finished deliveries (delivered or failed) whose last attempt is older than
+ * `before`. For finished rows nextAttemptAt holds the time of the last attempt.
+ */
+export function listFinishedBefore(
+  ctx: QueryCtx,
+  status: "delivered" | "failed",
+  before: number,
+  limit: number,
+) {
+  return ctx.db
+    .query("webhookDeliveries")
+    .withIndex("by_status_nextAttemptAt", (q) => q.eq("status", status).lt("nextAttemptAt", before))
+    .take(limit);
+}
+
+export function remove(ctx: MutationCtx, id: Id<"webhookDeliveries">) {
+  return ctx.db.delete(id);
+}

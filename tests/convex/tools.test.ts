@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { addDays, todayIso } from "@convex/lib/dates";
+import { LIMITS } from "@convex/shared/constants";
 import { sampleTool, setup, signIn, type TestConvex } from "../helpers/convex";
 
 /** Inserts an approved loan directly (the requests module adds the real flow). */
@@ -26,6 +27,24 @@ async function approvedLoan(
 }
 
 describe("tools: create and validate", () => {
+  it("caps how many tools one person can list", async () => {
+    const t = setup();
+    const owner = await signIn(t);
+    await t.run(async (ctx) => {
+      const me = await ctx.db.query("users").first();
+      for (let i = 0; i < LIMITS.maxListedToolsPerOwner; i++) {
+        await ctx.db.insert("tools", {
+          ...sampleTool,
+          name: `Tool ${i}`,
+          ownerId: me!._id,
+        });
+      }
+    });
+    await expect(owner.as.mutation(api.tools.create, sampleTool)).rejects.toThrow(
+      /at most 50 tools/,
+    );
+  });
+
   it("creates a listing owned by the caller with trimmed input", async () => {
     const t = setup();
     const alice = await signIn(t);

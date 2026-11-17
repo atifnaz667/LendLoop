@@ -113,6 +113,33 @@ export async function sweepDue(ctx: MutationCtx) {
 }
 
 // ---------------------------------------------------------------------------
+// Retention
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Payloads hold a recipient's first name and email, so they are not kept longer than needed. */
+export const RETENTION = { deliveredDays: 7, failedDays: 30 } as const;
+const PURGE_BATCH = 200;
+
+/** Deletes old finished deliveries in batches; the daily cron calls it. */
+export async function purgeOld(ctx: MutationCtx, now = Date.now()) {
+  const delivered = await deliveryModel.listFinishedBefore(
+    ctx,
+    "delivered",
+    now - RETENTION.deliveredDays * DAY_MS,
+    PURGE_BATCH,
+  );
+  const failed = await deliveryModel.listFinishedBefore(
+    ctx,
+    "failed",
+    now - RETENTION.failedDays * DAY_MS,
+    PURGE_BATCH,
+  );
+  for (const row of [...delivered, ...failed]) await deliveryModel.remove(ctx, row._id);
+  return delivered.length + failed.length;
+}
+
+// ---------------------------------------------------------------------------
 // Admin: automation health
 // ---------------------------------------------------------------------------
 

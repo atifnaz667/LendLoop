@@ -233,6 +233,49 @@ describe("outbox: delivery", () => {
   });
 });
 
+describe("outbox: retention", () => {
+  it("purges old finished deliveries but keeps recent and pending ones", async () => {
+    const t = setup();
+    stubFetch(200);
+    await requestFlow(t);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const day = 24 * 60 * 60 * 1000;
+    await t.run(async (ctx) => {
+      const base = {
+        eventType: "request.created" as const,
+        requestId: (await ctx.db.query("borrowRequests").first())!._id,
+        payload: "{}",
+        attempts: 1,
+      };
+      await ctx.db.insert("webhookDeliveries", {
+        ...base,
+        eventId: "old-delivered",
+        status: "delivered",
+        nextAttemptAt: Date.now() - 8 * day,
+      });
+      await ctx.db.insert("webhookDeliveries", {
+        ...base,
+        eventId: "recent-failed",
+        status: "failed",
+        nextAttemptAt: Date.now() - 8 * day,
+      });
+      await ctx.db.insert("webhookDeliveries", {
+        ...base,
+        eventId: "old-failed",
+        status: "failed",
+        nextAttemptAt: Date.now() - 31 * day,
+      });
+    });
+
+    await t.mutation(internal.webhookDeliveries.purgeOld, {});
+    const left = (await deliveries(t)).map((d) => d.eventId);
+    expect(left).toHaveLength(2);
+    expect(left).toContain("recent-failed");
+    expect(left).not.toContain("old-delivered");
+    expect(left).not.toContain("old-failed");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // n8n -> Convex HTTP endpoints
 // ---------------------------------------------------------------------------
@@ -327,6 +370,24 @@ describe("GET /n8n/overdue-loans", () => {
         })
       ).status,
     ).toBe(401);
+  });
+
+  it("accepts the previous secret during a rotation, and only then", async () => {
+    const t = setup();
+    await overdueLoan(t);
+    const old = "old-to-lendloop-secret";
+    expect((await signedFetch(t, "GET", "/n8n/overdue-loans", "", { secret: old })).status).toBe(
+      401,
+    );
+    process.env.N8N_TO_LENDLOOP_SECRET_PREVIOUS = old;
+    try {
+      expect((await signedFetch(t, "GET", "/n8n/overdue-loans", "", { secret: old })).status).toBe(
+        200,
+      );
+      expect((await signedFetch(t, "GET", "/n8n/overdue-loans")).status).toBe(200);
+    } finally {
+      delete process.env.N8N_TO_LENDLOOP_SECRET_PREVIOUS;
+    }
   });
 
   it("fails closed when the secret is not configured", async () => {

@@ -67,6 +67,9 @@ export const LIMITS = {
   requestMessageMax: 280,
   maxLoanDays: 30,
   maxDaysAhead: 180,
+  /** Abuse limits: a neighborhood board never needs more than this per person. */
+  maxListedToolsPerOwner: 50,
+  maxPendingRequestsPerBorrower: 10,
 } as const;
 
 /** Events Convex sends to the n8n request-notification workflow. */

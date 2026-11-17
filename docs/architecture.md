@@ -163,6 +163,9 @@ timestamp is more than 5 minutes away from the receiver's clock (replay window).
 direction signs the raw body only because n8n's test and production webhook URLs differ; the body
 already carries `eventId` and `eventType`, so the signature is bound to the event.
 
+Rotation: Convex also accepts `N8N_TO_LENDLOOP_SECRET_PREVIOUS` when it is set, so the n8n to Convex
+secret can be changed on one side at a time. It is removed once n8n uses the new secret.
+
 ### Reliability
 
 - **Outbox.** The mutation that changes a request also inserts a `webhookDeliveries` row in the same
@@ -170,7 +173,8 @@ already carries `eventId` and `eventType`, so the signature is bound to the even
 - **Retries.** The delivery action retries with exponential backoff (5 attempts). After the last
   attempt the row is marked `failed` and shown on the admin page. A cron sweeps due rows in case a
   scheduled run was missed.
-- **Idempotency.** `eventId` is a stable id per state change; n8n deduplicates on it.
+- **Idempotency.** `eventId` is a stable id per state change; n8n deduplicates on it, and marks an
+  event handled only after Convex accepted the write-back, so a failed write-back is retried.
   Write-backs carry an `idempotencyKey` (`notification:<eventId>` or
   `reminder:<requestId>:<YYYY-MM-DD>`). Convex mutations are serializable transactions, so the
   check-then-insert on `automationEvents.by_idempotencyKey` cannot create duplicates.
@@ -181,8 +185,9 @@ already carries `eventId` and `eventType`, so the signature is bound to the even
   (key `reminder:<requestId>:<day>:failed`), so the next daily run tries again.
 - **Concurrency.** Each delivery attempt first claims the row with a short lease in a mutation, so the
   scheduler and the cron sweep can never send the same event at the same time.
-- **Operator visibility.** Failed deliveries (with the last error) are listed on the Admin page with a
-  Retry action, and every loan shows its latest automation activity.
+- **Operator visibility.** Failed and waiting deliveries (with the last error and the next attempt)
+  are listed on the Admin page with Retry and Send now actions, and every loan shows its latest
+  automation activity.
 
 ### Workflow source
 
@@ -197,6 +202,8 @@ Convex and vice versa.
   status. No owner contact details are ever sent to a borrower and vice versa.
 - Overdue endpoint: request id, borrower first name and email, tool name, end date, days overdue.
 - Public tools query: name and category only.
+- Retention: a daily cron deletes delivered outbox rows after 7 days and failed ones after 30,
+  because their payloads contain a recipient email. n8n prunes executions after 14 days.
 
 ## 6. Frontend
 
